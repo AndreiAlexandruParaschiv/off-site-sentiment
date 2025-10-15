@@ -39,12 +39,15 @@ npm install
 
 ## Output
 
-Reports are saved in the `reports` folder with timestamp:
+Reports are saved in the `reports` folder with timestamp in **two formats**:
 
 ```
 reports/
-  └── CambriaUSA Backlinks-report-2025-10-15.html
+  ├── CambriaUSA Backlinks-report-2025-10-15.html  ← Visual HTML report
+  └── CambriaUSA Backlinks-report-2025-10-15.md    ← Markdown for import
 ```
+
+The **markdown format** is perfect for importing into other tools, with a clean table structure containing all data.
 
 ## Report Features
 
