@@ -4,7 +4,11 @@
   "description": "Analyze brand sentiment from backlink sources",
   "main": "src/sentiment-analyzer.js",
   "scripts": {
-    "analyze": "node src/analyze.js"
+    "analyze": "node src/analyze.js",
+    "analyze:lilly": "node src/analyze.js 'Lilly.com Backlinks Subdomains Oct 30 2025.csv' --english-only",
+    "analyze:halliburton": "node src/analyze.js 'Halliburton Backlinks Subdomains Oct 31 2025.csv' --english-only",
+    "analyze:wkkellogg": "node src/analyze.js 'WKKellogg Backlinks Subdomains Oct 31 2025.csv' --english-only",
+    "list": "ls -lh backlinks/*.csv"
   },
   "keywords": [
     "sentiment",

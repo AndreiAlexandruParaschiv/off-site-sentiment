@@ -91,12 +91,20 @@ if (!fs.existsSync(REPORTS_FOLDER)) {
   fs.mkdirSync(REPORTS_FOLDER);
 }
 
-// Generate output filename
+// Create company-specific folder within reports
+const companyFolder = path.join(REPORTS_FOLDER, companyName);
+if (!fs.existsSync(companyFolder)) {
+  fs.mkdirSync(companyFolder, { recursive: true });
+}
+
+// Generate output filenames with timestamp
 const baseName = path.basename(inputFile, '.csv');
 const timestamp = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+const timeStamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5); // YYYY-MM-DDTHH-MM-SS
 const cleanUrlsFile = path.join(TEMP_FOLDER, `${baseName}-urls.csv`);
-const reportFile = path.join(REPORTS_FOLDER, `${baseName}-report-${timestamp}.html`);
+const reportFile = path.join(companyFolder, `${companyName.replace(/\s+/g, '-')}-report-${timeStamp}.html`);
 
+console.log(`📁 Company folder: ${companyFolder}`);
 console.log(`📊 Output report: ${reportFile}`);
 console.log();
 

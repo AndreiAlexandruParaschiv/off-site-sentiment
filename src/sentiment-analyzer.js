@@ -11,18 +11,155 @@ const CONFIG = {
   inputCSV: process.argv[2] || 'sample-urls.csv',
   outputHTML: process.argv[3] || 'sentiment-report.html',
   searchTerm: process.argv[4] || 'Cambria',
-  maxUrls: 30, // Limit to top 30 URLs
+  maxUrls: 100, // Limit to top 100 URLs (after filtering)
+  maxUrlsToFetch: 150, // Fetch more URLs to account for stock/finance filtering
   requestTimeout: 10000,
   delayBetweenRequests: 1000,
   requireMention: false,
 };
 
-// Initialize sentiment analyzer with raw analysis (no custom adjustments)
-// This provides realistic sentiment including negative when criticism exists
-const sentiment = new Sentiment();
+// Stock and finance domains to skip (not real brand content)
+const STOCK_FINANCE_DOMAINS = [
+  'finance.yahoo.com',
+  'stockanalysis.com',
+  'seekingalpha.com',
+  'marketwatch.com',
+  'tradingview.com',
+  'morningstar.com',
+  'morningstar.co.uk',
+  'morningstar.au',
+  'finviz.com',
+  'investing.com',
+  'gurufocus.com',
+  'tipranks.com',
+  'marketbeat.com',
+  'fool.com',
+  'markets.businessinsider.com',
+  'benzinga.com',
+  'zacks.com',
+  'stocktwits.com',
+  'barchart.com',
+  'nasdaq.com/market-activity',
+  'wsj.com/market-data',
+  'bloomberg.com/quote',
+  'reuters.com/markets/companies',
+  'cnbc.com/quotes',
+  'cnn.com/markets/stocks',
+  'google.com/finance',
+  'dividendmax.com',
+  'stocktitan.net',
+  'simplywall.st',
+  'insidertrades.com',
+  'craft.co',
+  'datanyze.com',
+  'cbinsights.com',
+  'crunchbase.com/organization'
+];
+
+// Check if URL is a stock/finance page
+function isStockFinancePage(url) {
+  const urlLower = url.toLowerCase();
+  return STOCK_FINANCE_DOMAINS.some(domain => urlLower.includes(domain));
+}
 
 // Helper function to delay execution
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Context-aware brand sentiment analyzer for healthcare/pharma
+function analyzeBrandContext(text, brandName) {
+  // Create flexible brand matching (e.g., "WKKellogg" matches "WK Kellogg", "Kellogg's", etc.)
+  const brandVariations = [
+    brandName,
+    brandName.replace(/([A-Z])/g, ' $1').trim(), // "WKKellogg" -> "WK Kellogg"
+    brandName.replace(/^WK/, 'WK '), // Handle WK prefix
+    brandName.replace(/USA?$/i, ''), // Remove USA suffix
+    brandName + "'s", // Add possessive
+    brandName.replace(/^WK/i, '').trim(), // "WKKellogg" -> "Kellogg"
+    brandName.replace(/^WK/i, '').trim() + "'s", // "Kellogg's"
+  ];
+  
+  // Extract sentences containing any brand variation
+  const sentences = text.match(/[^.!?]+[.!?]+/g) || [];
+  const brandRegex = new RegExp(brandVariations.map(v => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'gi');
+  const brandSentences = sentences.filter(s => brandRegex.test(s));
+  
+  if (brandSentences.length === 0) {
+    return { score: 0, classification: 'neutral', indicators: [] };
+  }
+  
+  const brandContext = brandSentences.join(' ').toLowerCase();
+  
+  // Healthcare-specific POSITIVE indicators (how brand is perceived)
+  const positiveIndicators = [
+    'approved', 'breakthrough', 'effective', 'innovative', 'leading', 'first',
+    'superior', 'successful', 'advance', 'pioneer', 'develop', 'announce',
+    'achieve', 'demonstrate', 'show', 'proven', 'award', 'excellence',
+    'partner', 'collaboration', 'invest', 'expand', 'growth', 'milestone',
+    'benefit', 'improve', 'help', 'treat', 'cure', 'relief', 'solution'
+  ];
+  
+  // Healthcare-specific NEGATIVE indicators (actual criticism)
+  const negativeIndicators = [
+    'recall', 'lawsuit', 'sued', 'litigation', 'penalty', 'fine', 'violation',
+    'danger', 'dangerous', 'fatal', 'death', 'harm', 'injury', 'adverse',
+    'fail', 'failed', 'reject', 'denied', 'controversy', 'scandal',
+    'mislead', 'fraud', 'illegal', 'banned', 'prohibit', 'restrict',
+    'shortage', 'unavailable', 'limited', 'concern', 'worried', 'afraid',
+    'expensive', 'costly', 'unaffordable', 'price', 'complaint', 'criticism'
+  ];
+  
+  // NEUTRAL medical terms (don't count these as negative)
+  const neutralMedical = [
+    'weight loss', 'lose weight', 'obesity', 'overweight', 'diabetes',
+    'side effect', 'adverse', 'patient', 'treatment', 'therapy',
+    'disease', 'condition', 'symptom', 'dose', 'dosage', 'injection'
+  ];
+  
+  // Count indicators in brand context
+  let positiveCount = 0;
+  let negativeCount = 0;
+  const foundPositive = [];
+  const foundNegative = [];
+  
+  positiveIndicators.forEach(word => {
+    const regex = new RegExp(`\\b${word}`, 'gi');
+    const matches = brandContext.match(regex);
+    if (matches) {
+      positiveCount += matches.length;
+      if (!foundPositive.includes(word)) foundPositive.push(word);
+    }
+  });
+  
+  negativeIndicators.forEach(word => {
+    const regex = new RegExp(`\\b${word}`, 'gi');
+    const matches = brandContext.match(regex);
+    if (matches) {
+      negativeCount += matches.length;
+      if (!foundNegative.includes(word)) foundNegative.push(word);
+    }
+  });
+  
+  // Calculate sentiment score based on brand context
+  const score = positiveCount - (negativeCount * 2); // Weight negative more heavily
+  
+  // Classify based on indicators and context
+  let classification = 'neutral';
+  if (score >= 3 || (positiveCount >= 3 && negativeCount === 0)) {
+    classification = 'positive';
+  } else if (score < 0 || negativeCount >= 1) {
+    classification = 'negative';
+  }
+  
+  return {
+    score,
+    classification,
+    positiveCount,
+    negativeCount,
+    positive: foundPositive,
+    negative: foundNegative,
+    brandSentences: brandSentences.length
+  };
+}
 
 // Read URLs from CSV file
 async function readURLsFromCSV(filePath) {
@@ -129,43 +266,50 @@ function extractBrandContext(text, searchTerm, contextLength = 300) {
   return contexts.join(' ');
 }
 
-// Analyze sentiment of text
-function analyzeSentiment(text) {
-  const result = sentiment.analyze(text);
+// Analyze sentiment focusing on brand context (not used - replaced by context-aware)
+function analyzeSentiment(text, searchTerm) {
+  if (!text || text.trim().length === 0) {
+    return null;
+  }
+
+  // Use context-aware analysis for brand perception
+  const brandAnalysis = analyzeBrandContext(text, searchTerm);
 
   return {
-    score: result.score,
-    comparative: result.comparative,
-    positive: result.positive,
-    negative: result.negative,
-    positiveCount: result.positive.length,
-    negativeCount: result.negative.length,
+    score: brandAnalysis.score,
+    comparative: brandAnalysis.score / Math.max(brandAnalysis.brandSentences, 1),
+    positive: brandAnalysis.positive,
+    negative: brandAnalysis.negative,
+    positiveCount: brandAnalysis.positiveCount,
+    negativeCount: brandAnalysis.negativeCount,
+    classification: brandAnalysis.classification
   };
 }
 
-// Classify sentiment based on score
-function classifySentiment(score) {
-  if (score > 0) return 'positive';
-  if (score < 0) return 'negative';
-  return 'neutral';
+// Classify sentiment based on context analysis
+function classifySentiment(sentimentResult) {
+  if (!sentimentResult) return 'unknown';
+  // Use the context-aware classification
+  return sentimentResult.classification || 'neutral';
 }
 
-// Generate concise rationale for sentiment
+// Generate concise rationale for brand sentiment
 function generateSentimentRationale(sentimentResult, classification, text) {
   if (!sentimentResult) return '';
 
   const { positive, negative, positiveCount, negativeCount } = sentimentResult;
 
   if (classification === 'positive') {
-    return `Positive: ${positiveCount} positive word${positiveCount > 1 ? 's' : ''}, ${negativeCount} negative. Brand presented favorably.`;
+    const topPositive = positive.slice(0, 3).join(', ');
+    return `Positive: Brand portrayed favorably (${topPositive}). ${positiveCount} positive indicators.`;
   }
 
   if (classification === 'negative') {
     const topNegative = negative.slice(0, 3).join(', ');
-    return `Negative: ${negativeCount} negative word${negativeCount > 1 ? 's' : ''} (${topNegative}), ${positiveCount} positive. Critical or unfavorable context.`;
+    return `Negative: Critical context detected (${topNegative}). ${negativeCount} concern indicators.`;
   }
 
-  return `Neutral: Factual/objective mention (${positiveCount} positive, ${negativeCount} negative).`;
+  return `Neutral: Factual/informational brand mention. ${positiveCount} positive, ${negativeCount} concern indicators.`;
 }
 
 // Generate detailed insights from all results
@@ -268,6 +412,118 @@ function generateImprovementSuggestions(sentimentResult, classification, url, ex
   return suggestions.slice(0, 3);
 }
 
+// Generate opportunity JSON in required schema format
+function generateOpportunityJSON(reportData) {
+  const { searchTerm, timestamp, results, summary, insights } = reportData;
+  const successful = results.filter(r => r.status === 'success' && r.sentiment);
+  const positive = successful.filter(r => r.classification === 'positive').length;
+  const negative = successful.filter(r => r.classification === 'negative').length;
+  const neutral = successful.filter(r => r.classification === 'neutral').length;
+  
+  const avgScore = successful.length > 0 
+    ? successful.reduce((sum, r) => sum + r.sentiment.score, 0) / successful.length 
+    : 0;
+  
+  const positivePercent = successful.length > 0 ? (positive / successful.length * 100).toFixed(1) : 0;
+  
+  // Build detailed table for suggestions (properly formatted markdown)
+  const tableRows = results
+    .filter(r => r.status === 'success' && r.mentionsBrand)
+    .map(result => {
+      const sentimentBadge = result.classification === 'positive' ? '🟢 Positive' :
+                             result.classification === 'negative' ? '🔴 Negative' : '🟡 Neutral';
+      const mention = result.mentionsBrand ? `Yes (${result.mentionCount}x)` : 'No';
+      const excerpt = result.excerpts && result.excerpts.length > 0 
+        ? result.excerpts[0].substring(0, 150).replace(/\|/g, '\\|').replace(/\n/g, ' ') + '...' 
+        : '-';
+      
+      return `| ${result.url} | ${sentimentBadge} | **${mention}** | ${result.rationale} | _"${excerpt}"_ |`;
+    })
+    .join('\n');
+  
+  const suggestionValue = `## Top ${summary.withMentions} Referring Domains\n\n| Referring Domain | Sentiment Analysis | Brand Mention | Rationale | Excerpt |\n|-----|-----------|---------------|-----------|---------|\n${tableRows}`;
+  
+  return {
+    opportunity: {
+      id: `opp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      siteId: `site-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      runbook: "https://adobe.sharepoint.com/sites/backlink-sentiment-analysis",
+      type: "generic-opportunity",
+      data: {
+        dataSources: ["Ahrefs"]
+      },
+      origin: "ESS_OPS",
+      title: "Backlink Sentiment Analysis",
+      description: `This audit analyzes sentiment around brand mentions across backlink sources to assess brand perception and content quality. Using context-aware sentiment analysis, we evaluated ${summary.successful} referring domains to identify how ${searchTerm} is portrayed in external content, highlighting opportunities and potential reputation risks.`,
+      guidance: {
+        recommendations: [
+          {
+            insight: `Overall Brand Health: ${positivePercent > 70 ? 'Very good' : positivePercent > 40 ? 'Good' : positivePercent > 10 ? 'Fair' : 'Limited'} (${positivePercent}% positive sentiment, ${avgScore.toFixed(2)} avg score).`,
+            recommendation: null,
+            type: null,
+            rationale: negative > 0 
+              ? `${negative} pages show negative brand perception. ${neutral} neutral pages present opportunity for enhancement.`
+              : positive > 0
+                ? `${positive} positive mentions with ${neutral} neutral pages presenting enhancement opportunities.`
+                : `Predominantly neutral/factual coverage. ${neutral} pages lack strong brand advocacy - opportunity for enhanced brand positioning.`
+          },
+          {
+            insight: `${summary.withMentions} of ${summary.successful} pages actively mention ${searchTerm}. ${insights.topDomains.length > 0 ? `Top referrer: ${insights.topDomains[0].domain} (${insights.topDomains[0].count}x mentions).` : ''} ${insights.highMentionPages > 0 ? `${insights.highMentionPages} high-impact pages with 3+ mentions.` : ''}`,
+            recommendation: null,
+            type: null,
+            rationale: null
+          },
+          {
+            insight: null,
+            recommendation: negative > 0 
+              ? `Address ${negative} negative page${negative > 1 ? 's' : ''} immediately to improve brand perception.`
+              : `Monitor ${neutral} neutral pages for enhancement opportunities.`,
+            type: null,
+            rationale: null
+          },
+          {
+            insight: null,
+            recommendation: `${positive > 0 ? `Leverage ${positive} positive mention${positive > 1 ? 's' : ''} in marketing materials.` : ''} ${summary.successful - summary.withMentions > 0 ? `Outreach to ${summary.successful - summary.withMentions} non-mentioning sites to add ${searchTerm} brand presence.` : ''}`,
+            type: null,
+            rationale: null
+          }
+        ]
+      },
+      tags: ["Off-Site", "isElmo", "llm", "context-aware-sentiment"],
+      status: "NEW",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      updatedBy: "backlink-sentiment-analyzer@1.0.0"
+    },
+    suggestions: [
+      {
+        id: `sug-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        opportunityId: `opp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        type: "CONTENT_UPDATE",
+        rank: 1,
+        status: "NEW",
+        data: {
+          recommendations: [
+            {
+              pageUrl: null,
+              id: `rec-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              altText: null,
+              imageUrl: null
+            }
+          ],
+          suggestionValue
+        },
+        kpiDeltas: {
+          estimatedKPILift: 0
+        },
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        updatedBy: "backlink-sentiment-analyzer@1.0.0"
+      }
+    ]
+  };
+}
+
 // Process a single URL
 async function processURL(url, index, total) {
   console.log(`[${index + 1}/${total}] Processing: ${url}`);
@@ -301,21 +557,18 @@ async function processURL(url, index, total) {
     if (result.mentionsBrand) {
       result.excerpts = extractExcerpts(text, CONFIG.searchTerm);
 
-      // Extract context around brand mentions for focused sentiment analysis
-      const brandContext = extractBrandContext(text, CONFIG.searchTerm);
-
-      // Analyze sentiment ONLY on the context around brand mentions
-      result.sentiment = analyzeSentiment(brandContext);
-      result.classification = classifySentiment(result.sentiment.score);
-      result.rationale = generateSentimentRationale(result.sentiment, result.classification, brandContext);
+      // Analyze brand sentiment using context-aware analysis
+      result.sentiment = analyzeSentiment(text, CONFIG.searchTerm);
+      result.classification = classifySentiment(result.sentiment);
+      result.rationale = generateSentimentRationale(result.sentiment, result.classification, text);
       
       // Generate improvement suggestions
       result.suggestions = generateImprovementSuggestions(result.sentiment, result.classification, url, result.excerpts);
     } else {
       // If brand not mentioned, analyze full text but note it
       if (!CONFIG.requireMention) {
-        result.sentiment = analyzeSentiment(text);
-        result.classification = classifySentiment(result.sentiment.score);
+        result.sentiment = analyzeSentiment(text, CONFIG.searchTerm);
+        result.classification = classifySentiment(result.sentiment);
         result.rationale = `No brand mention detected. Page sentiment is ${result.classification} but not relevant to brand analysis.`;
         result.suggestions = ['No brand mention found - consider outreach to get brand coverage on this site'];
       } else {
@@ -361,11 +614,20 @@ async function main() {
       process.exit(1);
     }
 
-    // Limit to top N URLs
-    const urls = allUrls.slice(0, CONFIG.maxUrls);
+    // Filter out stock/finance pages first
+    const candidateUrls = allUrls.slice(0, CONFIG.maxUrlsToFetch);
+    const filteredUrls = candidateUrls.filter(url => !isStockFinancePage(url));
+    const skippedStock = candidateUrls.length - filteredUrls.length;
+    
+    if (skippedStock > 0) {
+      console.log(`ℹ️  Skipped ${skippedStock} stock/finance pages (not real brand content)`);
+    }
+
+    // Limit to top N URLs after filtering
+    const urls = filteredUrls.slice(0, CONFIG.maxUrls);
     
     if (allUrls.length > CONFIG.maxUrls) {
-      console.log(`ℹ️  Limiting analysis to top ${CONFIG.maxUrls} URLs (${allUrls.length} total found)`);
+      console.log(`ℹ️  Analyzing top ${urls.length} URLs from ${allUrls.length} total found`);
     }
 
     console.log();
@@ -436,6 +698,12 @@ async function main() {
       },
       insights,
     };
+
+    // Generate JSON report in opportunity schema format
+    const jsonPath = CONFIG.outputHTML.replace('.html', '.json');
+    const opportunityData = generateOpportunityJSON(reportData);
+    fs.writeFileSync(jsonPath, JSON.stringify(opportunityData, null, 2), 'utf8');
+    console.log(`✓ JSON report saved to: ${jsonPath}`);
 
     // Generate HTML report
     generateHTMLReport(reportData, CONFIG.outputHTML);
