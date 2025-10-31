@@ -10,13 +10,15 @@ const { generateMarkdownReport } = require('./markdown-generator');
 const CONFIG = {
   inputCSV: process.argv[2] || 'sample-urls.csv',
   outputHTML: process.argv[3] || 'sentiment-report.html',
-  searchTerm: 'Cambria',
+  searchTerm: process.argv[4] || 'Cambria',
+  maxUrls: 30, // Limit to top 30 URLs
   requestTimeout: 10000,
   delayBetweenRequests: 1000,
   requireMention: false,
 };
 
-// Initialize sentiment analyzer
+// Initialize sentiment analyzer with raw analysis (no custom adjustments)
+// This provides realistic sentiment including negative when criticism exists
 const sentiment = new Sentiment();
 
 // Helper function to delay execution
@@ -92,8 +94,8 @@ function mentionsSearchTerm(text, searchTerm) {
   return regex.test(text);
 }
 
-// Extract excerpts containing the search term
-function extractExcerpts(text, searchTerm, contextLength = 200) {
+// Extract excerpts containing the search term (short version for display)
+function extractExcerpts(text, searchTerm, contextLength = 75) {
   const regex = new RegExp(`(.{0,${contextLength}}${searchTerm}.{0,${contextLength}})`, 'gi');
   const matches = [];
   let match;
@@ -148,36 +150,122 @@ function classifySentiment(score) {
   return 'neutral';
 }
 
-// Generate rationale for sentiment based on analysis results
+// Generate concise rationale for sentiment
 function generateSentimentRationale(sentimentResult, classification, text) {
   if (!sentimentResult) return '';
 
-  const { score, positive, negative, positiveCount, negativeCount } = sentimentResult;
+  const { positive, negative, positiveCount, negativeCount } = sentimentResult;
 
   if (classification === 'positive') {
-    const reasons = [];
-    if (positiveCount > 0) {
-      reasons.push(`${positiveCount} positive word${positiveCount > 1 ? 's' : ''} (${positive.slice(0, 3).join(', ')}${positive.length > 3 ? '...' : ''})`);
-    }
-    if (negativeCount > 0) {
-      reasons.push(`${negativeCount} negative word${negativeCount > 1 ? 's' : ''}`);
-    }
-    return `Positive: ${reasons.join(', ')}. Brand is presented favorably in context.`;
+    return `Positive: ${positiveCount} positive word${positiveCount > 1 ? 's' : ''}, ${negativeCount} negative. Brand presented favorably.`;
   }
 
   if (classification === 'negative') {
-    const reasons = [];
-    if (negativeCount > 0) {
-      reasons.push(`${negativeCount} negative word${negativeCount > 1 ? 's' : ''} (${negative.slice(0, 3).join(', ')}${negative.length > 3 ? '...' : ''})`);
-    }
-    if (positiveCount > 0) {
-      reasons.push(`${positiveCount} positive word${positiveCount > 1 ? 's' : ''}`);
-    }
-    return `Negative: ${reasons.join(', ')}. Brand context contains criticism or unfavorable language.`;
+    const topNegative = negative.slice(0, 3).join(', ');
+    return `Negative: ${negativeCount} negative word${negativeCount > 1 ? 's' : ''} (${topNegative}), ${positiveCount} positive. Critical or unfavorable context.`;
   }
 
-  // Neutral
-  return `Neutral: ${positiveCount} positive, ${negativeCount} negative words. Factual/objective brand mention.`;
+  return `Neutral: Factual/objective mention (${positiveCount} positive, ${negativeCount} negative).`;
+}
+
+// Generate detailed insights from all results
+function generateDetailedInsights(results, searchTerm) {
+  const successful = results.filter(r => r.status === 'success' && r.sentiment);
+  const withMentions = results.filter(r => r.mentionsBrand);
+  
+  // Extract domains from URLs
+  const getDomain = (url) => {
+    try {
+      const urlObj = new URL(url);
+      return urlObj.hostname.replace('www.', '');
+    } catch {
+      return url;
+    }
+  };
+  
+  // Analyze domain patterns
+  const domainMentions = {};
+  const domainSentiments = {};
+  
+  results.forEach(result => {
+    const domain = getDomain(result.url);
+    
+    if (result.mentionsBrand) {
+      domainMentions[domain] = (domainMentions[domain] || 0) + result.mentionCount;
+      
+      if (result.classification) {
+        if (!domainSentiments[domain]) {
+          domainSentiments[domain] = { positive: 0, neutral: 0, negative: 0 };
+        }
+        domainSentiments[domain][result.classification]++;
+      }
+    }
+  });
+  
+  // Get top domains by mention count
+  const topDomains = Object.entries(domainMentions)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([domain, count]) => ({ domain, count, sentiment: domainSentiments[domain] }));
+  
+  // Analyze sentiment distribution by mention frequency
+  const highMentionPages = withMentions.filter(r => r.mentionCount >= 3);
+  const lowMentionPages = withMentions.filter(r => r.mentionCount < 3 && r.mentionCount > 0);
+  
+  // Identify key patterns
+  const insights = {
+    topDomains,
+    totalPages: results.length,
+    successfulPages: successful.length,
+    pagesWithMentions: withMentions.length,
+    highMentionPages: highMentionPages.length,
+    lowMentionPages: lowMentionPages.length,
+    
+    // Sentiment breakdown
+    positive: successful.filter(r => r.classification === 'positive').length,
+    neutral: successful.filter(r => r.classification === 'neutral').length,
+    negative: successful.filter(r => r.classification === 'negative').length,
+    
+    // High mention sentiment
+    highMentionSentiment: {
+      positive: highMentionPages.filter(r => r.classification === 'positive').length,
+      neutral: highMentionPages.filter(r => r.classification === 'neutral').length,
+      negative: highMentionPages.filter(r => r.classification === 'negative').length,
+    },
+  };
+  
+  return insights;
+}
+
+// Generate improvement suggestions based on sentiment analysis (top 3 only)
+function generateImprovementSuggestions(sentimentResult, classification, url, excerpts) {
+  const suggestions = [];
+  
+  if (!sentimentResult) {
+    return ['Page inaccessible or no relevant content'];
+  }
+
+  const { negative, negativeCount, positiveCount } = sentimentResult;
+
+  if (classification === 'negative') {
+    suggestions.push('🔴 *High Priority*: Address negative perception immediately');
+    if (negativeCount > 3) {
+      suggestions.push(`Counter negative terms: "${negative.slice(0, 2).join('", "')}"`);
+    }
+    suggestions.push('Engage content owner with positive updates/corrections');
+    
+  } else if (classification === 'neutral') {
+    suggestions.push('🟡 *Medium Priority*: Enhance brand perception');
+    suggestions.push('Provide compelling brand stories and value propositions');
+    suggestions.push('Share customer success stories and testimonials');
+    
+  } else if (classification === 'positive') {
+    suggestions.push('🟢 *Low Priority*: Maintain positive sentiment');
+    suggestions.push('Leverage coverage in marketing materials');
+    suggestions.push('Build relationship with content owner');
+  }
+
+  return suggestions.slice(0, 3);
 }
 
 // Process a single URL
@@ -195,6 +283,7 @@ async function processURL(url, index, total) {
     sentiment: null,
     classification: null,
     rationale: '',
+    suggestions: [],
   };
 
   try {
@@ -219,15 +308,20 @@ async function processURL(url, index, total) {
       result.sentiment = analyzeSentiment(brandContext);
       result.classification = classifySentiment(result.sentiment.score);
       result.rationale = generateSentimentRationale(result.sentiment, result.classification, brandContext);
+      
+      // Generate improvement suggestions
+      result.suggestions = generateImprovementSuggestions(result.sentiment, result.classification, url, result.excerpts);
     } else {
       // If brand not mentioned, analyze full text but note it
       if (!CONFIG.requireMention) {
         result.sentiment = analyzeSentiment(text);
         result.classification = classifySentiment(result.sentiment.score);
         result.rationale = `No brand mention detected. Page sentiment is ${result.classification} but not relevant to brand analysis.`;
+        result.suggestions = ['No brand mention found - consider outreach to get brand coverage on this site'];
       } else {
         result.status = 'skipped';
         result.error = `No mention of "${CONFIG.searchTerm}" found`;
+        result.suggestions = ['No brand mention found'];
       }
     }
 
@@ -260,11 +354,18 @@ async function main() {
     }
 
     // Read URLs from CSV
-    const urls = await readURLsFromCSV(CONFIG.inputCSV);
+    const allUrls = await readURLsFromCSV(CONFIG.inputCSV);
 
-    if (urls.length === 0) {
+    if (allUrls.length === 0) {
       console.error('Error: No URLs found in CSV file');
       process.exit(1);
+    }
+
+    // Limit to top N URLs
+    const urls = allUrls.slice(0, CONFIG.maxUrls);
+    
+    if (allUrls.length > CONFIG.maxUrls) {
+      console.log(`ℹ️  Limiting analysis to top ${CONFIG.maxUrls} URLs (${allUrls.length} total found)`);
     }
 
     console.log();
@@ -318,6 +419,9 @@ async function main() {
     console.log();
     console.log('Generating reports...');
 
+    // Generate detailed insights
+    const insights = generateDetailedInsights(results, CONFIG.searchTerm);
+
     // Prepare report data
     const reportData = {
       searchTerm: CONFIG.searchTerm,
@@ -330,6 +434,7 @@ async function main() {
         skipped: skipped.length,
         withMentions: withMentions.length,
       },
+      insights,
     };
 
     // Generate HTML report

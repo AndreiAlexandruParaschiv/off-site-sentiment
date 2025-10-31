@@ -1,7 +1,7 @@
 const fs = require('fs');
 
 function generateHTMLReport(data, outputPath) {
-  const { searchTerm, timestamp, results, summary } = data;
+  const { searchTerm, timestamp, results, summary, insights } = data;
   
   // Calculate statistics
   const successful = results.filter(r => r.status === 'success' && r.sentiment);
@@ -23,6 +23,40 @@ function generateHTMLReport(data, outputPath) {
   const positivePercent = successful.length > 0 ? (positive / successful.length * 100).toFixed(1) : 0;
   const neutralPercent = successful.length > 0 ? (neutral / successful.length * 100).toFixed(1) : 0;
   const negativePercent = successful.length > 0 ? (negative / successful.length * 100).toFixed(1) : 0;
+  
+  // Generate concise overview
+  function generateExecutiveOverview() {
+    const overallSentiment = avgScore > 0 ? 'positive' : avgScore < 0 ? 'negative' : 'neutral';
+    
+    return `<div class="executive-overview">
+      <h2>📊 Overview</h2>
+      <div class="overview-content">
+        <p><strong>${searchTerm}</strong> analysis of ${results.length} pages shows <strong>${overallSentiment}</strong> sentiment (score: ${avgScore.toFixed(2)}). ${positive} positive (${positivePercent}%), ${neutral} neutral (${neutralPercent}%), ${negative} negative (${negativePercent}%). ${summary.withMentions} of ${summary.successful} pages mention the brand.</p>
+        
+        <p><strong>Action:</strong> ${negative > 0 ? `Address ${negative} negative page${negative > 1 ? 's' : ''} immediately.` : ''} ${neutral > 0 ? `Enhance ${neutral} neutral page${neutral > 1 ? 's' : ''}.` : ''} ${positive > 0 ? `Leverage ${positive} positive mention${positive > 1 ? 's' : ''}.` : ''}</p>
+      </div>
+    </div>`;
+  }
+  
+  // Generate concise insights section
+  function generateInsightsSection() {
+    if (!insights) return '';
+    
+    const topDomain = insights.topDomains && insights.topDomains.length > 0 ? insights.topDomains[0] : null;
+    const mentionRate = ((insights.pagesWithMentions / insights.successfulPages) * 100).toFixed(1);
+    
+    return `<div class="insights-section">
+      <h2>🔍 Key Insights</h2>
+      <div class="insights-content">
+        <ul>
+          ${topDomain ? `<li><strong>Top Referrer:</strong> ${topDomain.domain} (${topDomain.count} mentions)</li>` : ''}
+          <li><strong>Visibility:</strong> ${insights.pagesWithMentions} of ${insights.successfulPages} pages (${mentionRate}%) mention ${searchTerm}</li>
+          <li><strong>High-Impact:</strong> ${insights.highMentionPages} pages with 3+ mentions${insights.highMentionPages > 0 ? ` (${insights.highMentionSentiment.negative} negative, ${insights.highMentionSentiment.positive} positive)` : ''}</li>
+          ${negative > 0 ? `<li><strong>Action Required:</strong> ${negative} pages need immediate attention</li>` : ''}
+        </ul>
+      </div>
+    </div>`;
+  }
   
   // Generate HTML
   const html = `<!DOCTYPE html>
@@ -285,6 +319,106 @@ function generateHTMLReport(data, outputPath) {
         .score-value.neutral {
             color: #6b7280;
         }
+        
+        .executive-overview {
+            padding: 40px;
+            background: #f9fafb;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        
+        .executive-overview h2 {
+            color: #1f2937;
+            margin-bottom: 20px;
+        }
+        
+        .executive-overview h3 {
+            color: #374151;
+            margin-top: 20px;
+            margin-bottom: 10px;
+        }
+        
+        .overview-content {
+            background: white;
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        
+        .overview-content p {
+            margin-bottom: 15px;
+            line-height: 1.6;
+        }
+        
+        .overview-content ul, .overview-content ol {
+            margin-left: 20px;
+            margin-bottom: 15px;
+        }
+        
+        .overview-content li {
+            margin-bottom: 8px;
+            line-height: 1.6;
+        }
+        
+        .suggestions-cell {
+            font-size: 0.85em;
+            max-width: 400px;
+        }
+        
+        .suggestions-cell ul {
+            margin: 5px 0;
+            padding-left: 20px;
+        }
+        
+        .suggestions-cell li {
+            margin-bottom: 5px;
+            line-height: 1.4;
+        }
+        
+        .insights-section {
+            padding: 40px;
+            background: #f9fafb;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        
+        .insights-section h2 {
+            color: #1f2937;
+            margin-bottom: 20px;
+        }
+        
+        .insights-content {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+        }
+        
+        .insight-block {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            border-left: 4px solid #667eea;
+        }
+        
+        .insight-block h3 {
+            color: #374151;
+            margin-bottom: 12px;
+            font-size: 1.1em;
+        }
+        
+        .insight-block p {
+            margin-bottom: 10px;
+            color: #6b7280;
+        }
+        
+        .insight-block ul {
+            margin-left: 20px;
+            margin-bottom: 0;
+        }
+        
+        .insight-block li {
+            margin-bottom: 8px;
+            line-height: 1.5;
+        }
     </style>
 </head>
 <body>
@@ -294,6 +428,10 @@ function generateHTMLReport(data, outputPath) {
             <p>Brand: <strong>${searchTerm}</strong></p>
             <p>Generated: ${new Date(timestamp).toLocaleString()}</p>
         </div>
+        
+        ${generateExecutiveOverview()}
+        
+        ${generateInsightsSection()}
         
         <div class="summary">
             <div class="stats-grid">
@@ -375,11 +513,12 @@ function generateHTMLReport(data, outputPath) {
                         <th>Score</th>
                         <th>Brand Mention</th>
                         <th>Rationale</th>
+                        <th>Improvement Suggestions</th>
                         <th>Excerpt</th>
                     </tr>
                 </thead>
                 <tbody>
-                    ${results.map((result, index) => `
+                    ${results.filter(result => result.mentionsBrand).map((result, index) => `
                     <tr>
                         <td>${index + 1}</td>
                         <td class="url-cell">
@@ -389,20 +528,26 @@ function generateHTMLReport(data, outputPath) {
                             <span class="badge ${result.status}">${result.status}</span>
                         </td>
                         <td>
-                            ${result.classification ? `<span class="badge ${result.classification}">${result.classification}</span>` : '-'}
+                            ${result.classification ? `<span class="badge ${result.classification}">${result.classification === 'negative' ? '🔴 Negative' : result.classification === 'neutral' ? '🟡 Neutral' : '🟢 Positive'}</span>` : '-'}
                         </td>
                         <td>
                             ${result.sentiment ? `<span class="score-value ${result.classification}">${result.sentiment.score}</span>` : '-'}
                         </td>
                         <td>
-                            ${result.mentionsBrand ? '✓ Yes' : '✗ No'}
+                            ${result.mentionsBrand ? `✓ Yes (${result.mentionCount}x)` : '✗ No'}
                         </td>
                         <td style="font-size: 0.85em; max-width: 400px;">
                             ${result.rationale || '-'}
                         </td>
+                        <td class="suggestions-cell">
+                            ${result.suggestions && result.suggestions.length > 0
+                                ? `<ul>${result.suggestions.slice(0, 4).map(s => `<li>${s.replace(/\*([^*]+)\*/g, '<em>$1</em>')}</li>`).join('')}</ul>`
+                                : '-'
+                            }
+                        </td>
                         <td>
                             ${result.excerpts && result.excerpts.length > 0 
-                                ? `<div class="excerpt">"...${result.excerpts[0].replace(new RegExp(searchTerm, 'gi'), match => `<span class="highlight">${match}</span>`)}..."</div>`
+                                ? `<div class="excerpt"><em>"${result.excerpts[0].replace(new RegExp(searchTerm, 'gi'), match => `<span class="highlight">${match}</span>`)}"</em></div>`
                                 : result.error 
                                     ? `<div class="error-message">${result.error}</div>`
                                     : '-'
