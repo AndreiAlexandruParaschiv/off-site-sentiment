@@ -415,16 +415,18 @@ function generateImprovementSuggestions(sentimentResult, classification, url, ex
 // Generate opportunity JSON in required schema format
 function generateOpportunityJSON(reportData) {
   const { searchTerm, timestamp, results, summary, insights } = reportData;
-  const successful = results.filter(r => r.status === 'success' && r.sentiment);
-  const positive = successful.filter(r => r.classification === 'positive').length;
-  const negative = successful.filter(r => r.classification === 'negative').length;
-  const neutral = successful.filter(r => r.classification === 'neutral').length;
   
-  const avgScore = successful.length > 0 
-    ? successful.reduce((sum, r) => sum + r.sentiment.score, 0) / successful.length 
+  // Focus ONLY on pages that mention the brand (actionable)
+  const withBrandMention = results.filter(r => r.status === 'success' && r.mentionsBrand);
+  const positive = withBrandMention.filter(r => r.classification === 'positive').length;
+  const negative = withBrandMention.filter(r => r.classification === 'negative').length;
+  const neutral = withBrandMention.filter(r => r.classification === 'neutral').length;
+  
+  const avgScore = withBrandMention.length > 0 
+    ? withBrandMention.reduce((sum, r) => sum + r.sentiment.score, 0) / withBrandMention.length 
     : 0;
   
-  const positivePercent = successful.length > 0 ? (positive / successful.length * 100).toFixed(1) : 0;
+  const positivePercent = withBrandMention.length > 0 ? (positive / withBrandMention.length * 100).toFixed(1) : 0;
   
   // Build detailed table for suggestions (properly formatted markdown)
   const tableRows = results
@@ -454,18 +456,22 @@ function generateOpportunityJSON(reportData) {
       },
       origin: "ESS_OPS",
       title: "Backlink Sentiment Analysis",
-      description: `This audit analyzes sentiment around brand mentions across backlink sources to assess brand perception and content quality. Using context-aware sentiment analysis, we evaluated ${summary.successful} referring domains to identify how ${searchTerm} is portrayed in external content, highlighting opportunities and potential reputation risks.`,
+      description: `This audit analyzes sentiment around brand mentions across backlink sources to assess brand perception and content quality. Using context-aware sentiment analysis, we evaluated ${summary.successful} referring domains and found ${summary.withMentions} pages actively mentioning ${searchTerm}. This analysis focuses on how ${searchTerm} is portrayed in external content, highlighting opportunities and potential reputation risks.`,
       guidance: {
         recommendations: [
           {
-            insight: `Overall Brand Health: ${positivePercent > 70 ? 'Very good' : positivePercent > 40 ? 'Good' : positivePercent > 10 ? 'Fair' : 'Limited'} (${positivePercent}% positive sentiment, ${avgScore.toFixed(2)} avg score).`,
+            insight: `Brand Mention Health: ${summary.withMentions} pages actively mention ${searchTerm} (${positivePercent > 70 ? 'Very good' : positivePercent > 40 ? 'Good' : positivePercent > 10 ? 'Fair' : 'Limited'} sentiment: ${positive} positive, ${neutral} neutral, ${negative} negative).`,
             recommendation: null,
             type: null,
-            rationale: negative > 0 
-              ? `${negative} pages show negative brand perception. ${neutral} neutral pages present opportunity for enhancement.`
-              : positive > 0
-                ? `${positive} positive mentions with ${neutral} neutral pages presenting enhancement opportunities.`
-                : `Predominantly neutral/factual coverage. ${neutral} pages lack strong brand advocacy - opportunity for enhanced brand positioning.`
+            rationale: withBrandMention.length === 0
+              ? `No pages actively mention ${searchTerm}. Outreach needed to build brand presence.`
+              : negative > 0 
+                ? `${negative} pages show negative brand perception. ${neutral} neutral pages present opportunity for enhancement.`
+                : positive > 0 && neutral > 0
+                  ? `${positive} positive mentions with ${neutral} neutral pages presenting enhancement opportunities.`
+                  : positive > 0
+                    ? `Strong brand sentiment with ${positive} positive mentions. Focus on maintaining positive perception.`
+                    : `Predominantly neutral/factual coverage. ${neutral} pages lack strong brand advocacy - opportunity for enhanced brand positioning.`
           },
           {
             insight: `${summary.withMentions} of ${summary.successful} pages actively mention ${searchTerm}. ${insights.topDomains.length > 0 ? `Top referrer: ${insights.topDomains[0].domain} (${insights.topDomains[0].count}x mentions).` : ''} ${insights.highMentionPages > 0 ? `${insights.highMentionPages} high-impact pages with 3+ mentions.` : ''}`,
@@ -476,14 +482,18 @@ function generateOpportunityJSON(reportData) {
           {
             insight: null,
             recommendation: negative > 0 
-              ? `Address ${negative} negative page${negative > 1 ? 's' : ''} immediately to improve brand perception.`
-              : `Monitor ${neutral} neutral pages for enhancement opportunities.`,
+              ? `Address ${negative} negative brand mention${negative > 1 ? 's' : ''} immediately to improve brand perception.`
+              : neutral > 0
+                ? `Enhance ${neutral} neutral brand mention${neutral > 1 ? 's' : ''} to increase positive advocacy.`
+                : positive > 0
+                  ? `Continue monitoring and maintaining positive brand mentions.`
+                  : `Build brand mention strategy to increase presence.`,
             type: null,
             rationale: null
           },
           {
-            insight: null,
-            recommendation: `${positive > 0 ? `Leverage ${positive} positive mention${positive > 1 ? 's' : ''} in marketing materials.` : ''} ${summary.successful - summary.withMentions > 0 ? `Outreach to ${summary.successful - summary.withMentions} non-mentioning sites to add ${searchTerm} brand presence.` : ''}`,
+            insight: `${summary.successful - summary.withMentions} backlink pages analyzed do not mention ${searchTerm}.`,
+            recommendation: `${positive > 0 ? `Leverage ${positive} positive brand mention${positive > 1 ? 's' : ''} in marketing materials. ` : ''}${summary.successful - summary.withMentions > 0 ? `Outreach to ${summary.successful - summary.withMentions} non-mentioning referring sites to add ${searchTerm} brand presence and increase visibility.` : ''}`,
             type: null,
             rationale: null
           }
