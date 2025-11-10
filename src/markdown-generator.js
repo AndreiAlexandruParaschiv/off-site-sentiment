@@ -59,9 +59,9 @@ ${insights ? generateInsightsMarkdown(insights, searchTerm, summary) : ''}
 
 ### Sentiment Distribution
 
-- **Positive:** ${positive} URLs (${positivePercent}%)
+- **Favorable:** ${positive} URLs (${positivePercent}%)
 - **Neutral:** ${neutral} URLs (${neutralPercent}%)
-- **Negative:** ${negative} URLs (${negativePercent}%)
+- **Unfavorable:** ${negative} URLs (${negativePercent}%)
 
 ---
 
@@ -81,7 +81,7 @@ ${insights ? generateInsightsMarkdown(insights, searchTerm, summary) : ''}
     // Format URL as HTML link to open in new tab
     const url = `<a href="${result.url}" target="_blank">${escapeMarkdown(result.url)}</a>`;
     const sentiment = result.classification 
-      ? (result.classification === 'negative' ? '🔴 Negative' : result.classification === 'neutral' ? '🟡 Neutral' : '🟢 Positive')
+      ? (result.classification === 'negative' ? '🔴 Unfavorable' : result.classification === 'neutral' ? '🟡 Neutral' : '🟢 Favorable')
       : '-';
     
     // Brand mention with count
@@ -122,9 +122,9 @@ ${insights ? generateInsightsMarkdown(insights, searchTerm, summary) : ''}
 ## Legend
 
 **Sentiment:**
-- \`positive\` - Positive sentiment (score > 0)
+- \`favorable\` - Favorable sentiment (score > 0)
 - \`neutral\` - Neutral sentiment (score = 0)
-- \`negative\` - Negative sentiment (score < 0)
+- \`unfavorable\` - Unfavorable sentiment (score < 0)
 
 ---
 

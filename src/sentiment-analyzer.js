@@ -62,6 +62,54 @@ function isStockFinancePage(url) {
   return STOCK_FINANCE_DOMAINS.some(domain => urlLower.includes(domain));
 }
 
+// Language-specific domains/paths to exclude
+const EXCLUDED_LANGUAGES = [
+  '.ua/',           // Ukrainian sites
+  '24tv.ua',        // Ukrainian news
+  '.it/wiki',       // Italian Wikipedia
+  'it.wikipedia',   // Italian Wikipedia
+  '/hl/',           // Language parameter
+  '?hl=',           // Language query parameter
+  '&hl=',           // Language query parameter
+  '/ua/',           // Ukrainian language path
+  '/it/',           // Italian language path (in domain or path)
+  '/tw/',           // Taiwanese/Chinese language path
+  '/jp/',           // Japanese language path
+  '/kr/',           // Korean language path
+  '/th/',           // Thai language path
+  '/ar/',           // Arabic language path
+  '/fr-ma/',        // French Morocco
+  '/es-mx/',        // Spanish Mexico
+  '/pl/',           // Polish language path
+  '/pt/',           // Portuguese language path
+  'ru.wikipedia',   // Russian Wikipedia
+  'fr.wikipedia',   // French Wikipedia
+  'de.wikipedia',   // German Wikipedia
+];
+
+// Check if URL is a language-specific page to exclude
+function isExcludedLanguagePage(url) {
+  const urlLower = url.toLowerCase();
+  
+  // Check for excluded language patterns
+  if (EXCLUDED_LANGUAGES.some(pattern => urlLower.includes(pattern))) {
+    return true;
+  }
+  
+  // Check for Italian subdomain (it.domain.com)
+  try {
+    const urlObj = new URL(url);
+    const hostname = urlObj.hostname.toLowerCase();
+    if (hostname.startsWith('it.') && hostname !== 'it.com') {
+      return true;
+    }
+  } catch {
+    // Invalid URL, skip
+  }
+  
+  return false;
+}
+
 // Helper function to delay execution
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -301,12 +349,12 @@ function generateSentimentRationale(sentimentResult, classification, text) {
 
   if (classification === 'positive') {
     const topPositive = positive.slice(0, 3).join(', ');
-    return `Positive: Brand portrayed favorably (${topPositive}). ${positiveCount} positive indicators.`;
+    return `Favorable: Brand portrayed favorably (${topPositive}). ${positiveCount} positive indicators.`;
   }
 
   if (classification === 'negative') {
     const topNegative = negative.slice(0, 3).join(', ');
-    return `Negative: Critical context detected (${topNegative}). ${negativeCount} concern indicators.`;
+    return `Unfavorable: Critical context detected (${topNegative}). ${negativeCount} concern indicators.`;
   }
 
   return `Neutral: Factual/informational brand mention. ${positiveCount} positive, ${negativeCount} concern indicators.`;
@@ -432,8 +480,8 @@ function generateOpportunityJSON(reportData) {
   const tableRows = results
     .filter(r => r.status === 'success' && r.mentionsBrand)
     .map(result => {
-      const sentimentBadge = result.classification === 'positive' ? '🟢 Positive' :
-                             result.classification === 'negative' ? '🔴 Negative' : '🟡 Neutral';
+      const sentimentBadge = result.classification === 'positive' ? '🟢 Favorable' :
+                             result.classification === 'negative' ? '🔴 Unfavorable' : '🟡 Neutral';
       const mention = result.mentionsBrand ? `Yes (${result.mentionCount}x)` : 'No';
       const excerpt = result.excerpts && result.excerpts.length > 0 
         ? result.excerpts[0].substring(0, 150).replace(/\|/g, '\\|').replace(/\n/g, ' ') + '...' 
@@ -626,11 +674,19 @@ async function main() {
 
     // Filter out stock/finance pages first
     const candidateUrls = allUrls.slice(0, CONFIG.maxUrlsToFetch);
-    const filteredUrls = candidateUrls.filter(url => !isStockFinancePage(url));
-    const skippedStock = candidateUrls.length - filteredUrls.length;
+    const afterStockFilter = candidateUrls.filter(url => !isStockFinancePage(url));
+    const skippedStock = candidateUrls.length - afterStockFilter.length;
     
     if (skippedStock > 0) {
       console.log(`ℹ️  Skipped ${skippedStock} stock/finance pages (not real brand content)`);
+    }
+
+    // Filter out language-specific pages (tw, jp, kr, ar, it, ua, fr, de, pl, pt, th, etc.)
+    const filteredUrls = afterStockFilter.filter(url => !isExcludedLanguagePage(url));
+    const skippedLanguage = afterStockFilter.length - filteredUrls.length;
+    
+    if (skippedLanguage > 0) {
+      console.log(`ℹ️  Skipped ${skippedLanguage} non-English language pages (tw, jp, kr, ar, it, ua, etc.)`);
     }
 
     // Limit to top N URLs after filtering

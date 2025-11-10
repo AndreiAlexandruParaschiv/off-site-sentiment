@@ -466,7 +466,7 @@ function generateHTMLReport(data, outputPath) {
                 <h3>Sentiment Distribution</h3>
                 <div class="bar-item">
                     <div class="bar-label">
-                        <span>Positive</span>
+                        <span>Favorable</span>
                         <span>${positive} URLs (${positivePercent}%)</span>
                     </div>
                     <div class="bar-container">
@@ -488,7 +488,7 @@ function generateHTMLReport(data, outputPath) {
                 </div>
                 <div class="bar-item">
                     <div class="bar-label">
-                        <span>Negative</span>
+                        <span>Unfavorable</span>
                         <span>${negative} URLs (${negativePercent}%)</span>
                     </div>
                     <div class="bar-container">
@@ -528,7 +528,7 @@ function generateHTMLReport(data, outputPath) {
                             <span class="badge ${result.status}">${result.status}</span>
                         </td>
                         <td>
-                            ${result.classification ? `<span class="badge ${result.classification}">${result.classification === 'negative' ? '🔴 Negative' : result.classification === 'neutral' ? '🟡 Neutral' : '🟢 Positive'}</span>` : '-'}
+                            ${result.classification ? `<span class="badge ${result.classification}">${result.classification === 'negative' ? '🔴 Unfavorable' : result.classification === 'neutral' ? '🟡 Neutral' : '🟢 Favorable'}</span>` : '-'}
                         </td>
                         <td>
                             ${result.sentiment ? `<span class="score-value ${result.classification}">${result.sentiment.score}</span>` : '-'}
