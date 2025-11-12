@@ -62,6 +62,28 @@ function isStockFinancePage(url) {
   return STOCK_FINANCE_DOMAINS.some(domain => urlLower.includes(domain));
 }
 
+// Specific domains to exclude from analysis
+const EXCLUDED_DOMAINS = [
+  'nexaexperience.com',
+  'marutisuzukitruevalue.com',
+  'marutisuzukidrivingschool.com',
+  'marutisuzukicommercial.com',
+  'screener.in',
+];
+
+// Check if URL matches an excluded domain
+function isExcludedDomain(url) {
+  const urlLower = url.toLowerCase();
+  try {
+    const urlObj = new URL(url);
+    const hostname = urlObj.hostname.toLowerCase();
+    return EXCLUDED_DOMAINS.some(domain => hostname === domain || hostname.endsWith('.' + domain));
+  } catch {
+    // Invalid URL, check if domain appears in URL string
+    return EXCLUDED_DOMAINS.some(domain => urlLower.includes(domain));
+  }
+}
+
 // Language-specific domains/paths to exclude
 const EXCLUDED_LANGUAGES = [
   '.ua/',           // Ukrainian sites
@@ -137,23 +159,32 @@ function analyzeBrandContext(text, brandName) {
   
   const brandContext = brandSentences.join(' ').toLowerCase();
   
-  // Healthcare-specific POSITIVE indicators (how brand is perceived)
+  // Business-specific POSITIVE indicators (how brand is perceived)
   const positiveIndicators = [
     'approved', 'breakthrough', 'effective', 'innovative', 'leading', 'first',
     'superior', 'successful', 'advance', 'pioneer', 'develop', 'announce',
     'achieve', 'demonstrate', 'show', 'proven', 'award', 'excellence',
     'partner', 'collaboration', 'invest', 'expand', 'growth', 'milestone',
-    'benefit', 'improve', 'help', 'treat', 'cure', 'relief', 'solution'
+    'benefit', 'improve', 'help', 'treat', 'cure', 'relief', 'solution',
+    // Automotive/promotional terms
+    'limited edition', 'limited version', 'special edition', 'exclusive',
+    'premium', 'launch', 'launched', 'introduced', 'debut', 'unveiled'
   ];
   
-  // Healthcare-specific NEGATIVE indicators (actual criticism)
+  // Business-specific NEGATIVE indicators (actual criticism)
+  // Note: "price" alone is NOT negative - only price criticism phrases
   const negativeIndicators = [
     'recall', 'lawsuit', 'sued', 'litigation', 'penalty', 'fine', 'violation',
     'danger', 'dangerous', 'fatal', 'death', 'harm', 'injury', 'adverse',
     'fail', 'failed', 'reject', 'denied', 'controversy', 'scandal',
     'mislead', 'fraud', 'illegal', 'banned', 'prohibit', 'restrict',
-    'shortage', 'unavailable', 'limited', 'concern', 'worried', 'afraid',
-    'expensive', 'costly', 'unaffordable', 'price', 'complaint', 'criticism'
+    'shortage', 'unavailable', 'limited availability', 'limited stock', 
+    'concern', 'worried', 'afraid',
+    // Price criticism phrases (not just "price" - that's neutral for car listings)
+    'too expensive', 'overpriced', 'over priced', 'not worth the price',
+    'not worth it', 'too costly', 'too pricey', 'unaffordable', 'expensive',
+    'costly', 'pricey', 'rip off', 'overcharge', 'over charge',
+    'complaint', 'criticism', 'disappointed', 'disappointing'
   ];
   
   // NEUTRAL medical terms (don't count these as negative)
@@ -169,8 +200,20 @@ function analyzeBrandContext(text, brandName) {
   const foundPositive = [];
   const foundNegative = [];
   
+  // Helper function to create regex for word/phrase matching
+  function createIndicatorRegex(indicator) {
+    // Escape special regex characters
+    const escaped = indicator.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // For multi-word phrases, match the whole phrase; for single words, use word boundaries
+    if (indicator.includes(' ')) {
+      return new RegExp(`\\b${escaped}\\b`, 'gi');
+    } else {
+      return new RegExp(`\\b${escaped}\\b`, 'gi');
+    }
+  }
+  
   positiveIndicators.forEach(word => {
-    const regex = new RegExp(`\\b${word}`, 'gi');
+    const regex = createIndicatorRegex(word);
     const matches = brandContext.match(regex);
     if (matches) {
       positiveCount += matches.length;
@@ -179,7 +222,7 @@ function analyzeBrandContext(text, brandName) {
   });
   
   negativeIndicators.forEach(word => {
-    const regex = new RegExp(`\\b${word}`, 'gi');
+    const regex = createIndicatorRegex(word);
     const matches = brandContext.match(regex);
     if (matches) {
       negativeCount += matches.length;
@@ -681,9 +724,17 @@ async function main() {
       console.log(`ℹ️  Skipped ${skippedStock} stock/finance pages (not real brand content)`);
     }
 
+    // Filter out excluded domains
+    const afterDomainFilter = afterStockFilter.filter(url => !isExcludedDomain(url));
+    const skippedDomains = afterStockFilter.length - afterDomainFilter.length;
+    
+    if (skippedDomains > 0) {
+      console.log(`ℹ️  Skipped ${skippedDomains} excluded domain(s)`);
+    }
+
     // Filter out language-specific pages (tw, jp, kr, ar, it, ua, fr, de, pl, pt, th, etc.)
-    const filteredUrls = afterStockFilter.filter(url => !isExcludedLanguagePage(url));
-    const skippedLanguage = afterStockFilter.length - filteredUrls.length;
+    const filteredUrls = afterDomainFilter.filter(url => !isExcludedLanguagePage(url));
+    const skippedLanguage = afterDomainFilter.length - filteredUrls.length;
     
     if (skippedLanguage > 0) {
       console.log(`ℹ️  Skipped ${skippedLanguage} non-English language pages (tw, jp, kr, ar, it, ua, etc.)`);
