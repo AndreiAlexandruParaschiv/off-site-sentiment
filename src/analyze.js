@@ -9,31 +9,51 @@ const BACKLINKS_FOLDER = 'backlinks';
 const REPORTS_FOLDER = 'reports';
 const TEMP_FOLDER = '.temp';
 
-// Helper function to extract company name from CSV filename
-function extractCompanyName(filename) {
+// Helper function to extract company name and folder name from CSV filename
+function extractCompanyInfo(filename) {
   // Remove file extension
   const nameWithoutExt = filename.replace(/\.csv$/i, '');
   
   // Extract company name - handles formats like:
-  // "Lilly.com Backlinks Subdomains Oct 30 2025 (1).csv" -> "Lilly"
-  // "CambriaUSA Backlinks.csv" -> "Cambria"
+  // "Lilly.com Backlinks Subdomains Oct 30 2025 (1).csv" -> { name: "Lilly", folder: "Lilly" }
+  // "CambriaUSA Backlinks.csv" -> { name: "Cambria", folder: "Cambria USA" }
+  // "Daikin.co.uk - trending URLs Citations.csv" -> { name: "Daikin", folder: "Daikin.co.uk" }
+  
+  // Try to find domain pattern including .co.uk (e.g., "Daikin.co.uk")
+  const domainWithCountryMatch = nameWithoutExt.match(/^([a-zA-Z0-9-]+)(\.co\.[a-z]{2,3})/i);
+  if (domainWithCountryMatch) {
+    return {
+      name: domainWithCountryMatch[1], // Just the company name for search
+      folder: domainWithCountryMatch[1] + domainWithCountryMatch[2] // Full domain for folder
+    };
+  }
   
   // Try to find domain pattern (e.g., "Lilly.com")
   const domainMatch = nameWithoutExt.match(/^([a-zA-Z0-9-]+)\.(com|net|org|edu|gov)/i);
   if (domainMatch) {
-    return domainMatch[1];
+    return {
+      name: domainMatch[1],
+      folder: domainMatch[1]
+    };
   }
   
   // Try to extract company name before "Backlinks"
   const backlinkMatch = nameWithoutExt.match(/^([a-zA-Z0-9-]+)\s*Backlinks/i);
   if (backlinkMatch) {
     // Remove "USA" suffix if present
-    return backlinkMatch[1].replace(/USA$/i, '');
+    const name = backlinkMatch[1].replace(/USA$/i, '');
+    return {
+      name: name,
+      folder: backlinkMatch[1]
+    };
   }
   
   // Fallback: use first word
   const firstWord = nameWithoutExt.split(/[\s_-]/)[0];
-  return firstWord;
+  return {
+    name: firstWord,
+    folder: firstWord
+  };
 }
 
 console.log('='.repeat(60));
@@ -69,16 +89,26 @@ if (!fs.existsSync(inputPath)) {
   process.exit(1);
 }
 
-// Extract company name from filename
-const companyName = extractCompanyName(inputFile);
+// Extract company info from filename
+const companyInfo = extractCompanyInfo(inputFile);
+const companyName = companyInfo.name; // Used for sentiment search
+const folderName = companyInfo.folder; // Used for folder naming
 
 // Check for --english-only flag
 const englishOnly = process.argv.includes('--english-only');
 
+// Check for --max-urls=N flag
+const maxUrlsArg = process.argv.find(arg => arg.startsWith('--max-urls='));
+const maxUrls = maxUrlsArg ? parseInt(maxUrlsArg.split('=')[1]) : null;
+
 console.log(`📁 Input file: ${inputFile}`);
-console.log(`🏢 Company name: ${companyName}`);
+console.log(`🏢 Company name: ${companyName} (search term)`);
+console.log(`📁 Folder name: ${folderName}`);
 if (englishOnly) {
   console.log(`🌐 Language filter: English only`);
+}
+if (maxUrls) {
+  console.log(`📊 Max URLs: ${maxUrls}`);
 }
 
 // Create temp folder if it doesn't exist
@@ -92,7 +122,7 @@ if (!fs.existsSync(REPORTS_FOLDER)) {
 }
 
 // Create company-specific folder within reports
-const companyFolder = path.join(REPORTS_FOLDER, companyName);
+const companyFolder = path.join(REPORTS_FOLDER, folderName);
 if (!fs.existsSync(companyFolder)) {
   fs.mkdirSync(companyFolder, { recursive: true });
 }
@@ -102,7 +132,7 @@ const baseName = path.basename(inputFile, '.csv');
 const timestamp = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
 const timeStamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5); // YYYY-MM-DDTHH-MM-SS
 const cleanUrlsFile = path.join(TEMP_FOLDER, `${baseName}-urls.csv`);
-const reportFile = path.join(companyFolder, `${companyName.replace(/\s+/g, '-')}-report-${timeStamp}.html`);
+const reportFile = path.join(companyFolder, `${folderName.replace(/\s+/g, '-')}-report-${timeStamp}.html`);
 
 console.log(`📁 Company folder: ${companyFolder}`);
 console.log(`📊 Output report: ${reportFile}`);
@@ -118,7 +148,8 @@ try {
 
   // Step 2: Run sentiment analysis
   console.log('Step 2: Running sentiment analysis...');
-  execSync(`node "${path.join(__dirname, 'sentiment-analyzer.js')}" "${cleanUrlsFile}" "${reportFile}" "${companyName}"`, { 
+  const maxUrlsParam = maxUrls ? ` "${maxUrls}"` : '';
+  execSync(`node "${path.join(__dirname, 'sentiment-analyzer.js')}" "${cleanUrlsFile}" "${reportFile}" "${companyName}"${maxUrlsParam}`, { 
     stdio: 'inherit' 
   });
   console.log();

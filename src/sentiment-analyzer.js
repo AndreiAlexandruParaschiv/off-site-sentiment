@@ -11,8 +11,8 @@ const CONFIG = {
   inputCSV: process.argv[2] || 'sample-urls.csv',
   outputHTML: process.argv[3] || 'sentiment-report.html',
   searchTerm: process.argv[4] || 'Cambria',
-  maxUrls: 100, // Limit to top 100 URLs (after filtering)
-  maxUrlsToFetch: 150, // Fetch more URLs to account for stock/finance filtering
+  maxUrls: parseInt(process.argv[5]) || 100, // Limit to top N URLs (after filtering)
+  maxUrlsToFetch: parseInt(process.argv[5]) ? parseInt(process.argv[5]) + 50 : 150, // Fetch more URLs to account for stock/finance filtering
   requestTimeout: 10000,
   delayBetweenRequests: 1000,
   requireMention: false,
@@ -53,12 +53,20 @@ const STOCK_FINANCE_DOMAINS = [
   'craft.co',
   'datanyze.com',
   'cbinsights.com',
-  'crunchbase.com/organization'
+  'apps.apple.com',
+  'play.google.com',
+  'ts2.tech', // Stock/financial news site often misclassified
 ];
 
 // Check if URL is a stock/finance page
 function isStockFinancePage(url) {
   const urlLower = url.toLowerCase();
+  
+  // Explicit stock keywords in URL
+  if (urlLower.includes('share-price') || urlLower.includes('stock-price') || urlLower.includes('market-updates')) {
+    return true;
+  }
+
   return STOCK_FINANCE_DOMAINS.some(domain => urlLower.includes(domain));
 }
 
@@ -168,11 +176,16 @@ function analyzeBrandContext(text, brandName) {
     'benefit', 'improve', 'help', 'treat', 'cure', 'relief', 'solution',
     // Automotive/promotional terms
     'limited edition', 'limited version', 'special edition', 'exclusive',
-    'premium', 'launch', 'launched', 'introduced', 'debut', 'unveiled'
+    'premium', 'launch', 'launched', 'introduced', 'debut', 'unveiled',
+    // Quality/value justification terms
+    'additional features', 'additional modes', 'worth the price', 'worth it',
+    'quality', 'high quality', 'top quality', 'best in class', 'market leader',
+    'recommend', 'recommended', 'trusted', 'reliable', 'durable'
   ];
   
   // Business-specific NEGATIVE indicators (actual criticism)
-  // Note: "price" alone is NOT negative - only price criticism phrases
+  // Note: Single price words removed - they're too context-dependent
+  // Only use clear negative phrases or words that are unambiguously negative
   const negativeIndicators = [
     'recall', 'lawsuit', 'sued', 'litigation', 'penalty', 'fine', 'violation',
     'danger', 'dangerous', 'fatal', 'death', 'harm', 'injury', 'adverse',
@@ -180,11 +193,61 @@ function analyzeBrandContext(text, brandName) {
     'mislead', 'fraud', 'illegal', 'banned', 'prohibit', 'restrict',
     'shortage', 'unavailable', 'limited availability', 'limited stock', 
     'concern', 'worried', 'afraid',
-    // Price criticism phrases (not just "price" - that's neutral for car listings)
+    // Price criticism phrases - only clear negative phrases, not single words
+    // Note: "expensive", "pricey", "costly" alone are NOT negative - they can be neutral/positive
+    // when describing premium products or when defended ("not overpriced")
     'too expensive', 'overpriced', 'over priced', 'not worth the price',
-    'not worth it', 'too costly', 'too pricey', 'unaffordable', 'expensive',
-    'costly', 'pricey', 'rip off', 'overcharge', 'over charge',
+    'not worth it', 'too costly', 'too pricey', 'unaffordable',
+    'rip off', 'overcharge', 'over charge',
     'complaint', 'criticism', 'disappointed', 'disappointing'
+  ];
+  
+  // Negation patterns that flip the meaning of negative words
+  const negationPatterns = [
+    'not to say',
+    'not saying',
+    "that's not to say",
+    "thats not to say",
+    'not necessarily',
+    'not always',
+    'not inevitably',
+    'does not mean',
+    "doesn't mean",
+    'is not',
+    "isn't",
+    'are not',
+    "aren't",
+    'worth the',
+    'justify',
+    'justified',
+    'justifies',
+    'prevention',
+    'protection',
+    'security',
+    'anti-',
+    'avoid',
+    'prevent',
+    'protect',
+    'report', // For "report fraud"
+    'potential', // For "potential drawbacks" - neutralizes the following negative word
+    'possible',  // Similar to potential
+  ];
+
+  // Neutral headings/structural terms (don't count these as negative)
+  const neutralStructuralTerms = [
+    'drawback',
+    'drawbacks',
+    'limitation',
+    'limitations',
+    'con', 
+    'cons', // Pros and Cons
+    'weakness',
+    'weaknesses',
+    'disadvantage',
+    'disadvantages',
+    'verdict',
+    'conclusion',
+    'summary'
   ];
   
   // NEUTRAL medical terms (don't count these as negative)
@@ -221,12 +284,46 @@ function analyzeBrandContext(text, brandName) {
     }
   });
   
+  // Helper function to check if a negative word appears in a negated context
+  function isNegatedContext(text, word) {
+    // First check if the word is a structural term (like "drawbacks" in a header)
+    if (neutralStructuralTerms.includes(word.toLowerCase())) {
+      return true;
+    }
+
+    const wordIndex = text.toLowerCase().indexOf(word.toLowerCase());
+    if (wordIndex === -1) return false;
+    
+    // Check the 100 characters before the word for negation patterns
+    const contextBefore = text.substring(Math.max(0, wordIndex - 100), wordIndex).toLowerCase();
+    
+    // Check if any negation pattern appears before this word
+    return negationPatterns.some(pattern => contextBefore.includes(pattern));
+  }
+  
   negativeIndicators.forEach(word => {
     const regex = createIndicatorRegex(word);
     const matches = brandContext.match(regex);
     if (matches) {
-      negativeCount += matches.length;
-      if (!foundNegative.includes(word)) foundNegative.push(word);
+      // Check if each match is in a negated context
+      let actualNegativeCount = 0;
+      
+      // Find all positions of this word in the text
+      let searchText = brandContext.toLowerCase();
+      let wordLower = word.toLowerCase();
+      let pos = 0;
+      
+      while ((pos = searchText.indexOf(wordLower, pos)) !== -1) {
+        if (!isNegatedContext(brandContext, word)) {
+          actualNegativeCount++;
+        }
+        pos += wordLower.length;
+      }
+      
+      if (actualNegativeCount > 0) {
+        negativeCount += actualNegativeCount;
+        if (!foundNegative.includes(word)) foundNegative.push(word);
+      }
     }
   });
   
@@ -472,40 +569,61 @@ function generateDetailedInsights(results, searchTerm) {
   return insights;
 }
 
-// Generate improvement suggestions based on sentiment analysis (top 3 only)
-function generateImprovementSuggestions(sentimentResult, classification, url, excerpts) {
+// Generate context-aware AI recommendations based on sentiment analysis
+function generateImprovementSuggestions(sentimentResult, classification, url, excerpts, searchTerm) {
   const suggestions = [];
   
   if (!sentimentResult) {
-    return ['Page inaccessible or no relevant content'];
+    return ['Page inaccessible or no relevant content. Consider alternative outreach channels.'];
   }
 
-  const { negative, negativeCount, positiveCount } = sentimentResult;
+  const { positive, negative, negativeCount, positiveCount } = sentimentResult;
+  const brandName = searchTerm || 'the brand';
 
   if (classification === 'negative') {
-    suggestions.push('🔴 *High Priority*: Address negative perception immediately');
-    if (negativeCount > 3) {
-      suggestions.push(`Counter negative terms: "${negative.slice(0, 2).join('", "')}"`);
+    // Unfavorable: Specific improvement suggestions based on detected issues
+    suggestions.push('🔴 **Action Required**: Address negative brand perception on this page.');
+    
+    if (negative && negative.length > 0) {
+      const topIssues = negative.slice(0, 3).join(', ');
+      suggestions.push(`**Issues Detected**: Content contains concerning terms (${topIssues}). Consider reaching out to the content owner with factual corrections or updated information.`);
     }
-    suggestions.push('Engage content owner with positive updates/corrections');
+    
+    suggestions.push(`**Recommended Response**: Prepare a counter-narrative with positive customer testimonials, case studies, or official statements to address the concerns raised about ${brandName}.`);
+    suggestions.push('**Outreach Strategy**: Contact the site owner professionally, acknowledge their perspective, and offer to provide accurate, updated information or exclusive content.');
     
   } else if (classification === 'neutral') {
-    suggestions.push('🟡 *Medium Priority*: Enhance brand perception');
-    suggestions.push('Provide compelling brand stories and value propositions');
-    suggestions.push('Share customer success stories and testimonials');
+    // Neutral: Enhancement suggestions to convert to favorable
+    suggestions.push('🟡 **Opportunity**: Content is factual but lacks brand advocacy.');
+    
+    if (positiveCount === 0) {
+      suggestions.push(`**Enhancement Needed**: This page mentions ${brandName} without highlighting differentiators. Provide the content creator with compelling value propositions, unique features, or customer success stories.`);
+    } else {
+      suggestions.push(`**Partial Success**: Some positive aspects detected (${positive ? positive.slice(0, 2).join(', ') : 'general mentions'}), but overall tone remains neutral. Share additional proof points to strengthen brand perception.`);
+    }
+    
+    suggestions.push('**Content Ideas**: Offer exclusive quotes, industry insights, product comparisons, or customer case studies that showcase brand leadership.');
+    suggestions.push('**Relationship Building**: Engage with the content creator through social media or direct outreach to establish an ongoing relationship for future positive coverage.');
     
   } else if (classification === 'positive') {
-    suggestions.push('🟢 *Low Priority*: Maintain positive sentiment');
-    suggestions.push('Leverage coverage in marketing materials');
-    suggestions.push('Build relationship with content owner');
+    // Favorable: Reinforce what's working well
+    suggestions.push('🟢 **Excellent Coverage**: This content portrays the brand favorably.');
+    
+    if (positive && positive.length > 0) {
+      const highlights = positive.slice(0, 4).join(', ');
+      suggestions.push(`**Strengths Highlighted**: The content emphasizes positive attributes (${highlights}). These talking points resonate well and should be amplified in marketing materials.`);
+    }
+    
+    suggestions.push(`**Leverage Opportunity**: Share this positive coverage across ${brandName}'s social channels, include in press kits, and reference in sales materials as third-party validation.`);
+    suggestions.push('**Relationship Value**: This content creator is a potential brand advocate. Build a stronger relationship through exclusive access, early product announcements, or collaboration opportunities.');
   }
 
-  return suggestions.slice(0, 3);
+  return suggestions.slice(0, 4);
 }
 
 // Generate opportunity JSON in required schema format
 function generateOpportunityJSON(reportData) {
-  const { searchTerm, timestamp, results, summary, insights } = reportData;
+  const { searchTerm, timestamp, results, summary, insights, title, sourceDescription } = reportData;
   
   // Focus ONLY on pages that mention the brand (actionable)
   const withBrandMention = results.filter(r => r.status === 'success' && r.mentionsBrand);
@@ -520,34 +638,40 @@ function generateOpportunityJSON(reportData) {
   const positivePercent = withBrandMention.length > 0 ? (positive / withBrandMention.length * 100).toFixed(1) : 0;
   
   // Build detailed table for suggestions (properly formatted markdown)
-  const tableRows = results
+  // Sort by mention count descending before generating table
+  const sortedResults = results
     .filter(r => r.status === 'success' && r.mentionsBrand)
+    .sort((a, b) => b.mentionCount - a.mentionCount);
+
+  const tableRows = sortedResults
     .map(result => {
       const sentimentBadge = result.classification === 'positive' ? '🟢 Favorable' :
                              result.classification === 'negative' ? '🔴 Unfavorable' : '🟡 Neutral';
       const mention = result.mentionsBrand ? `Yes (${result.mentionCount}x)` : 'No';
-      const excerpt = result.excerpts && result.excerpts.length > 0 
-        ? result.excerpts[0].substring(0, 150).replace(/\|/g, '\\|').replace(/\n/g, ' ') + '...' 
+      
+      // Format AI recommendation for JSON output
+      const aiRecommendation = result.suggestions && result.suggestions.length > 0 
+        ? result.suggestions.map(s => s.replace(/\|/g, '\\|').replace(/\n/g, ' ')).join(' ')
         : '-';
       
-      return `| ${result.url} | ${sentimentBadge} | **${mention}** | ${result.rationale} | _"${excerpt}"_ |`;
+      return `| ${result.url} | ${sentimentBadge} | **${mention}** | ${result.rationale} | ${aiRecommendation} |`;
     })
     .join('\n');
   
-  const suggestionValue = `## Top ${summary.withMentions} Referring Domains\n\n| Referring Domain | Sentiment Analysis | Brand Mention | Rationale | Excerpt |\n|-----|-----------|---------------|-----------|---------|\n${tableRows}`;
+  const suggestionValue = `## Top ${summary.withMentions} Referring Domains\n\n| Referring Domain | Sentiment Analysis | Brand Mention | Rationale | AI Recommendation |\n|-----|-----------|---------------|-----------|---------|\n${tableRows}`;
   
   return {
     opportunity: {
       id: `opp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       siteId: `site-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       runbook: "https://adobe.sharepoint.com/sites/backlink-sentiment-analysis",
-      type: "generic-opportunity",
-      data: {
-        dataSources: ["Ahrefs"]
-      },
+        type: "generic-opportunity",
+        data: {
+          dataSources: ["Site"]
+        },
       origin: "ESS_OPS",
-      title: "Backlink Sentiment Analysis",
-      description: `This audit analyzes sentiment around brand mentions across backlink sources to assess brand perception and content quality. Using context-aware sentiment analysis, we evaluated ${summary.successful} referring domains and found ${summary.withMentions} pages actively mentioning ${searchTerm}. This analysis focuses on how ${searchTerm} is portrayed in external content, highlighting opportunities and potential reputation risks.`,
+      title: title || "[Beta] Backlink Sentiment Analysis",
+      description: `This audit analyzes sentiment around brand mentions across ${sourceDescription || 'backlink sources'} to assess brand perception and content quality. Using context-aware sentiment analysis, we evaluated ${summary.successful} referring domains and found ${summary.withMentions} pages actively mentioning ${searchTerm}. This analysis focuses on how ${searchTerm} is portrayed in external content, highlighting opportunities and potential reputation risks.`,
       guidance: {
         recommendations: [
           {
@@ -590,7 +714,7 @@ function generateOpportunityJSON(reportData) {
           }
         ]
       },
-      tags: ["Off-Site", "isElmo", "llm", "context-aware-sentiment"],
+      tags: ["Off-Site", "isElmo"],
       status: "NEW",
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -663,8 +787,8 @@ async function processURL(url, index, total) {
       result.classification = classifySentiment(result.sentiment);
       result.rationale = generateSentimentRationale(result.sentiment, result.classification, text);
       
-      // Generate improvement suggestions
-      result.suggestions = generateImprovementSuggestions(result.sentiment, result.classification, url, result.excerpts);
+      // Generate context-aware AI recommendations
+      result.suggestions = generateImprovementSuggestions(result.sentiment, result.classification, url, result.excerpts, CONFIG.searchTerm);
     } else {
       // If brand not mentioned, analyze full text but note it
       if (!CONFIG.requireMention) {
@@ -816,19 +940,33 @@ async function main() {
       insights,
     };
 
-    // Generate JSON report in opportunity schema format
+    const isCitedAnalysis = CONFIG.inputCSV.includes('cited') || CONFIG.outputHTML.includes('cited');
+    const reportTitle = isCitedAnalysis ? '[Beta] Top Cited URLs Sentiment Analysis' : '[Beta] Backlink Sentiment Analysis';
+    const sourceDescription = isCitedAnalysis ? 'top cited URLs' : 'backlink sources';
+
+    // Generate Opportunity JSON
     const jsonPath = CONFIG.outputHTML.replace('.html', '.json');
-    const opportunityData = generateOpportunityJSON(reportData);
+    const opportunityData = generateOpportunityJSON({
+      ...reportData,
+      title: reportTitle,
+      sourceDescription: sourceDescription
+    });
     fs.writeFileSync(jsonPath, JSON.stringify(opportunityData, null, 2), 'utf8');
     console.log(`✓ JSON report saved to: ${jsonPath}`);
 
     // Generate HTML report
-    generateHTMLReport(reportData, CONFIG.outputHTML);
+    generateHTMLReport({
+      ...reportData,
+      title: reportTitle
+    }, CONFIG.outputHTML);
     console.log(`✓ HTML report saved to: ${CONFIG.outputHTML}`);
 
     // Generate Markdown report
     const markdownPath = CONFIG.outputHTML.replace('.html', '.md');
-    generateMarkdownReport(reportData, markdownPath);
+    generateMarkdownReport({
+      ...reportData,
+      title: reportTitle
+    }, markdownPath);
     console.log(`✓ Markdown report saved to: ${markdownPath}`);
     console.log();
 

@@ -359,19 +359,42 @@ function generateHTMLReport(data, outputPath) {
             line-height: 1.6;
         }
         
-        .suggestions-cell {
+        .ai-recommendation-cell {
             font-size: 0.85em;
-            max-width: 400px;
+            max-width: 500px;
+            padding: 12px !important;
         }
         
-        .suggestions-cell ul {
-            margin: 5px 0;
-            padding-left: 20px;
+        .ai-recommendation-cell.positive {
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.05) 0%, rgba(5, 150, 105, 0.08) 100%);
+            border-left: 3px solid #10b981;
         }
         
-        .suggestions-cell li {
-            margin-bottom: 5px;
-            line-height: 1.4;
+        .ai-recommendation-cell.neutral {
+            background: linear-gradient(135deg, rgba(107, 114, 128, 0.05) 0%, rgba(75, 85, 99, 0.08) 100%);
+            border-left: 3px solid #6b7280;
+        }
+        
+        .ai-recommendation-cell.negative {
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.05) 0%, rgba(220, 38, 38, 0.08) 100%);
+            border-left: 3px solid #ef4444;
+        }
+        
+        .ai-recommendation {
+            line-height: 1.5;
+        }
+        
+        .ai-recommendation p {
+            margin-bottom: 8px;
+            padding: 4px 0;
+        }
+        
+        .ai-recommendation p:last-child {
+            margin-bottom: 0;
+        }
+        
+        .ai-recommendation strong {
+            color: #1f2937;
         }
         
         .insights-section {
@@ -419,7 +442,90 @@ function generateHTMLReport(data, outputPath) {
             margin-bottom: 8px;
             line-height: 1.5;
         }
+
+        th {
+            cursor: pointer;
+            position: relative;
+        }
+
+        th:hover {
+            background-color: #e5e7eb;
+        }
+
+        th::after {
+            content: '';
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            border: 5px solid transparent;
+        }
+
+        th.asc::after {
+            border-bottom-color: #667eea;
+            margin-top: -5px;
+        }
+
+        th.desc::after {
+            border-top-color: #667eea;
+            margin-top: 2px;
+        }
     </style>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const table = document.querySelector('.results-table');
+            const headers = table.querySelectorAll('th');
+            const tbody = table.querySelector('tbody');
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+
+            // Sort functionality
+            headers.forEach((header, index) => {
+                // Skip the first column (#) if desired, but making all sortable is fine
+                header.addEventListener('click', () => {
+                    const currentOrder = header.classList.contains('asc') ? 'desc' : 'asc';
+                    
+                    // Reset all headers
+                    headers.forEach(h => {
+                        h.classList.remove('asc', 'desc');
+                    });
+                    
+                    // Set new order
+                    header.classList.add(currentOrder);
+                    
+                    const multiplier = currentOrder === 'asc' ? 1 : -1;
+                    
+                    rows.sort((rowA, rowB) => {
+                        const cellA = rowA.querySelectorAll('td')[index].innerText.trim();
+                        const cellB = rowB.querySelectorAll('td')[index].innerText.trim();
+                        
+                        // Check if numeric (including "12x" format)
+                        const numA = parseFloat(cellA.replace(/[^0-9.-]/g, ''));
+                        const numB = parseFloat(cellB.replace(/[^0-9.-]/g, ''));
+                        
+                        if (!isNaN(numA) && !isNaN(numB) && 
+                            // Ensure we're actually looking at numeric-ish columns like Score or Mentions
+                            (index === 0 || index === 4 || index === 5)) {
+                            return (numA - numB) * multiplier;
+                        }
+                        
+                        return cellA.localeCompare(cellB) * multiplier;
+                    });
+                    
+                    // Reorder rows
+                    rows.forEach(row => tbody.appendChild(row));
+                });
+            });
+
+            // Default sort: Mentions (index 5) Descending
+            const mentionsHeader = headers[5];
+            if (mentionsHeader) {
+                mentionsHeader.click(); // First click is Asc (default logic) or specific logic needed
+                if (mentionsHeader.classList.contains('asc')) {
+                    mentionsHeader.click(); // Click again for Desc
+                }
+            }
+        });
+    </script>
 </head>
 <body>
     <div class="container">
@@ -513,8 +619,7 @@ function generateHTMLReport(data, outputPath) {
                         <th>Score</th>
                         <th>Brand Mention</th>
                         <th>Rationale</th>
-                        <th>Improvement Suggestions</th>
-                        <th>Excerpt</th>
+                        <th>AI Recommendation</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -539,18 +644,12 @@ function generateHTMLReport(data, outputPath) {
                         <td style="font-size: 0.85em; max-width: 400px;">
                             ${result.rationale || '-'}
                         </td>
-                        <td class="suggestions-cell">
+                        <td class="ai-recommendation-cell ${result.classification || ''}">
                             ${result.suggestions && result.suggestions.length > 0
-                                ? `<ul>${result.suggestions.slice(0, 4).map(s => `<li>${s.replace(/\*([^*]+)\*/g, '<em>$1</em>')}</li>`).join('')}</ul>`
+                                ? `<div class="ai-recommendation">
+                                    ${result.suggestions.map(s => `<p>${s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\*([^*]+)\*/g, '<em>$1</em>')}</p>`).join('')}
+                                   </div>`
                                 : '-'
-                            }
-                        </td>
-                        <td>
-                            ${result.excerpts && result.excerpts.length > 0 
-                                ? `<div class="excerpt"><em>"${result.excerpts[0].replace(new RegExp(searchTerm, 'gi'), match => `<span class="highlight">${match}</span>`)}"</em></div>`
-                                : result.error 
-                                    ? `<div class="error-message">${result.error}</div>`
-                                    : '-'
                             }
                         </td>
                     </tr>

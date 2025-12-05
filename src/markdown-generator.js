@@ -26,6 +26,12 @@ function generateMarkdownReport(data, outputPath) {
   
   // Generate markdown content
   const overallSentiment = avgScore > 0 ? 'positive' : avgScore < 0 ? 'negative' : 'neutral';
+  const sentimentEmoji = overallSentiment === 'positive' ? '🟢' : overallSentiment === 'negative' ? '🔴' : '🟡';
+  
+  // Calculate brand health score (0-100)
+  const brandHealthScore = Math.min(100, Math.max(0, 
+    50 + (avgScore * 5) + (positive * 3) - (negative * 5) + (summary.withMentions / summary.successful * 20)
+  )).toFixed(0);
   
   let markdown = `# Backlink Sentiment Analysis Report
 
@@ -34,17 +40,31 @@ function generateMarkdownReport(data, outputPath) {
 
 ---
 
-## 📊 Overview
+## 📊 Executive Summary
 
-**${searchTerm}** analysis of ${results.length} pages shows **${overallSentiment}** sentiment (score: ${avgScore.toFixed(2)}). ${positive} positive (${positivePercent}%), ${neutral} neutral (${neutralPercent}%), ${negative} negative (${negativePercent}%). ${summary.withMentions} of ${summary.successful} pages mention the brand.
+This report analyzes the **top ${results.length} backlink URLs** pointing to ${searchTerm}'s website to assess brand perception across external content. By examining how ${searchTerm} is mentioned and portrayed on referring domains, we identify reputation risks and opportunities for brand enhancement.
 
-**Action:** ${negative > 0 ? `Address ${negative} negative page${negative > 1 ? 's' : ''} immediately.` : ''} ${neutral > 0 ? `Enhance ${neutral} neutral page${neutral > 1 ? 's' : ''}.` : ''} ${positive > 0 ? `Leverage ${positive} positive mention${positive > 1 ? 's' : ''}.` : ''}
+### Brand Health Score: ${brandHealthScore}/100 ${sentimentEmoji}
+
+| Metric | Value |
+|--------|-------|
+| **Overall Sentiment** | ${overallSentiment.charAt(0).toUpperCase() + overallSentiment.slice(1)} (${avgScore.toFixed(2)}) |
+| **Favorable Mentions** | ${positive} (${positivePercent}%) |
+| **Neutral Mentions** | ${neutral} (${neutralPercent}%) |
+| **Unfavorable Mentions** | ${negative} (${negativePercent}%) |
+| **Brand Visibility** | ${summary.withMentions} of ${summary.successful} pages mention ${searchTerm} |
+
+---
+
+## 🎯 Priority Action Items
+
+${generateActionItems(positive, neutral, negative, summary, searchTerm, insights)}
 
 ---
 
 ## 🔍 Key Insights
 
-${insights ? generateInsightsMarkdown(insights, searchTerm, summary) : ''}
+${insights ? generateInsightsMarkdown(insights, searchTerm, summary, positive, neutral, negative) : ''}
 
 ---
 
@@ -67,8 +87,8 @@ ${insights ? generateInsightsMarkdown(insights, searchTerm, summary) : ''}
 
 ## Detailed Results
 
-| URL | Sentiment | Brand Mention | Rationale | Improvement Suggestions | Excerpt |
-|-----|-----------|---------------|-----------|------------------------|---------|
+| URL | Sentiment | Brand Mention | Rationale | AI Recommendation |
+|-----|-----------|---------------|-----------|-------------------|
 `;
   
   // Add each result as a table row (only include pages with brand mentions)
@@ -94,27 +114,14 @@ ${insights ? generateInsightsMarkdown(insights, searchTerm, summary) : ''}
     
     const rationale = result.rationale ? escapeMarkdown(result.rationale) : '-';
     
-    // Format suggestions
-    let suggestions = '-';
+    // Format AI recommendation based on sentiment
+    let aiRecommendation = '-';
     if (result.suggestions && result.suggestions.length > 0) {
-      // Take first 3 suggestions for brevity in table
-      const topSuggestions = result.suggestions.slice(0, 3);
-      suggestions = topSuggestions.map(s => escapeMarkdown(s)).join('; ');
+      // Format all suggestions as a compact recommendation
+      aiRecommendation = result.suggestions.map(s => escapeMarkdown(s)).join(' ');
     }
     
-    // For excerpt, show the longest/best context where brand is mentioned
-    let excerpt = '-';
-    if (result.excerpts && result.excerpts.length > 0) {
-      // Find the longest excerpt (usually has the most context)
-      const bestExcerpt = result.excerpts.reduce((longest, current) => 
-        current.length > longest.length ? current : longest
-      );
-      // Clean it up and show brief context (up to 150 chars for table)
-      const cleanExcerpt = escapeMarkdown(bestExcerpt.substring(0, 150).trim());
-      excerpt = `_"${cleanExcerpt}${bestExcerpt.length > 150 ? '...' : ''}"_`;
-    }
-    
-    markdown += `| ${url} | ${sentiment} | ${brandMention} | ${rationale} | ${suggestions} | ${excerpt} |\n`;
+    markdown += `| ${url} | ${sentiment} | ${brandMention} | ${rationale} | ${aiRecommendation} |\n`;
   });
   
   markdown += `\n---
@@ -135,22 +142,96 @@ ${insights ? generateInsightsMarkdown(insights, searchTerm, summary) : ''}
   fs.writeFileSync(outputPath, markdown, 'utf8');
 }
 
+// Helper function to generate priority action items
+function generateActionItems(positive, neutral, negative, summary, searchTerm, insights) {
+  let markdown = '';
+  let priority = 1;
+  
+  // High priority: Address negative mentions
+  if (negative > 0) {
+    markdown += `### 🔴 HIGH PRIORITY\n\n`;
+    markdown += `${priority}. **Address ${negative} Unfavorable Mention${negative > 1 ? 's' : ''}**\n`;
+    markdown += `   - Review negative content and identify specific concerns\n`;
+    markdown += `   - Prepare response strategy or request corrections from content owners\n`;
+    markdown += `   - Monitor these pages for sentiment changes\n\n`;
+    priority++;
+  }
+  
+  // Medium priority: Enhance neutral mentions
+  if (neutral > 0) {
+    markdown += `### 🟡 MEDIUM PRIORITY\n\n`;
+    markdown += `${priority}. **Enhance ${neutral} Neutral Mention${neutral > 1 ? 's' : ''}**\n`;
+    markdown += `   - Reach out to content owners with compelling brand stories\n`;
+    markdown += `   - Provide case studies, testimonials, or updated product information\n`;
+    markdown += `   - Offer exclusive content or quotes to improve brand portrayal\n\n`;
+    priority++;
+  }
+  
+  // Low priority: Leverage positive mentions
+  if (positive > 0) {
+    markdown += `### 🟢 OPPORTUNITY\n\n`;
+    markdown += `${priority}. **Leverage ${positive} Favorable Mention${positive > 1 ? 's' : ''}**\n`;
+    markdown += `   - Use positive coverage in marketing materials and social proof\n`;
+    markdown += `   - Build relationships with these content creators for future collaboration\n`;
+    markdown += `   - Share and amplify positive content on social media\n\n`;
+    priority++;
+  }
+  
+  // Visibility improvement
+  const nonMentioning = summary.successful - summary.withMentions;
+  if (nonMentioning > 0) {
+    markdown += `### 📈 VISIBILITY IMPROVEMENT\n\n`;
+    markdown += `${priority}. **Increase Brand Presence on ${nonMentioning} Non-Mentioning Page${nonMentioning > 1 ? 's' : ''}**\n`;
+    markdown += `   - These referring pages link to ${searchTerm} but don't mention the brand by name\n`;
+    markdown += `   - Contact site owners to add brand mentions with anchor text\n`;
+    markdown += `   - This can improve both SEO and brand awareness\n\n`;
+  }
+  
+  return markdown;
+}
+
 // Helper function to generate concise insights markdown
-function generateInsightsMarkdown(insights, searchTerm, summary) {
+function generateInsightsMarkdown(insights, searchTerm, summary, positive, neutral, negative) {
   const topDomain = insights.topDomains && insights.topDomains.length > 0 ? insights.topDomains[0] : null;
   const mentionRate = ((insights.pagesWithMentions / insights.successfulPages) * 100).toFixed(1);
   
-  let markdown = '';
-  if (topDomain) {
-    markdown += `- **Top Referrer:** ${topDomain.domain} (${topDomain.count} mentions)\n`;
-  }
-  markdown += `- **Visibility:** ${insights.pagesWithMentions} of ${insights.successfulPages} pages (${mentionRate}%) mention ${searchTerm}\n`;
-  markdown += `- **High-Impact:** ${insights.highMentionPages} pages with 3+ mentions${insights.highMentionPages > 0 ? ` (${insights.highMentionSentiment.negative} negative, ${insights.highMentionSentiment.positive} positive)` : ''}\n`;
+  let markdown = '### Backlink Profile Analysis\n\n';
   
-  const successful = summary.successful || 0;
-  const negative = Math.round((summary.total - summary.successful) * 0.4); // Estimate from current data
-  if (negative > 0) {
-    markdown += `- **Action Required:** Monitor and address negative pages\n`;
+  if (topDomain) {
+    markdown += `- **Top Referring Domain:** ${topDomain.domain} with ${topDomain.count} brand mentions\n`;
+  }
+  
+  markdown += `- **Brand Visibility Rate:** ${mentionRate}% of backlink pages actively mention ${searchTerm}\n`;
+  markdown += `- **High-Impact Pages:** ${insights.highMentionPages} pages with 3+ brand mentions`;
+  if (insights.highMentionPages > 0) {
+    markdown += ` (${insights.highMentionSentiment.positive} favorable, ${insights.highMentionSentiment.negative} unfavorable)`;
+  }
+  markdown += `\n`;
+  
+  // Sentiment health assessment
+  markdown += `\n### Sentiment Assessment\n\n`;
+  
+  if (negative === 0 && positive > 0) {
+    markdown += `✅ **Excellent:** No negative brand mentions detected. ${positive} favorable mention${positive > 1 ? 's' : ''} strengthen${positive === 1 ? 's' : ''} brand perception.\n`;
+  } else if (negative === 0 && positive === 0) {
+    markdown += `⚠️ **Neutral:** All mentions are factual/informational. Opportunity to enhance brand advocacy.\n`;
+  } else if (negative > 0 && negative <= positive) {
+    markdown += `⚠️ **Mixed:** ${negative} negative mention${negative > 1 ? 's' : ''} detected but outweighed by ${positive} positive. Address concerns while leveraging positives.\n`;
+  } else if (negative > 0) {
+    markdown += `🚨 **Attention Required:** ${negative} negative mention${negative > 1 ? 's' : ''} detected. Prioritize reputation management.\n`;
+  }
+  
+  // Top domains breakdown
+  if (insights.topDomains && insights.topDomains.length > 1) {
+    markdown += `\n### Top Referring Domains by Brand Mentions\n\n`;
+    markdown += `| Domain | Mentions | Sentiment |\n`;
+    markdown += `|--------|----------|----------|\n`;
+    insights.topDomains.slice(0, 5).forEach(domain => {
+      const sentimentInfo = domain.sentiment || {};
+      const sentimentLabel = sentimentInfo.positive > 0 ? '🟢 Favorable' : 
+                            sentimentInfo.negative > 0 ? '🔴 Unfavorable' : '🟡 Neutral';
+      markdown += `| ${domain.domain} | ${domain.count} | ${sentimentLabel} |\n`;
+    });
   }
   
   return markdown;
